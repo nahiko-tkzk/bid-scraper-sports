@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "kkj-search": {
+      "type": "sse",
+      "url": "https://mcp.n-3.ai/mcp?tools=kkj-search"
+    }
+  }
+}
