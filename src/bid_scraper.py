@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import sys
 
 from . import mcp_client, kkj_api_client, slack_notifier
@@ -26,6 +27,7 @@ def load_sent_ids() -> set:
 
 def save_sent_ids(sent_ids: set):
     """送信済みIDを保存する。"""
+    os.makedirs(os.path.dirname(SENT_IDS_PATH), exist_ok=True)
     data = {id_: True for id_ in sent_ids}
     with open(SENT_IDS_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
