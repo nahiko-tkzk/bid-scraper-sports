@@ -6,6 +6,7 @@ import os
 import sys
 
 from . import mcp_client, kkj_api_client, slack_notifier
+from .sports_agency_scraper import fetch_boshu
 from .config import SEARCH_KEYWORDS, SENT_IDS_PATH, LOG_LEVEL
 
 
@@ -41,10 +42,48 @@ def search(keyword: str) -> list[dict]:
         return kkj_api_client.search_bids(keyword)
 
 
+def _collect(sent_ids: set) -> list[dict]:
+    """全ソースから案件を収集し、重複排除して返す。"""
+    logger = logging.getLogger(__name__)
+    new_items: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def _add(item: dict):
+        item_id = item.get("id")
+        if not item_id:
+            return
+        if item_id in sent_ids or item_id in seen_ids:
+            return
+        seen_ids.add(item_id)
+        new_items.append(item)
+
+    # 1. 官公需API検索（MCP → KKJ フォールバック）
+    for keyword in SEARCH_KEYWORDS:
+        try:
+            results = search(keyword)
+        except Exception as e:
+            logger.error("検索失敗 keyword=%s: %s", keyword, e)
+            continue
+        logger.info("keyword=%s: %d件取得", keyword, len(results))
+        for item in results:
+            _add(item)
+
+    # 2. スポーツ庁 公募ページスクレイピング
+    try:
+        boshu_items = fetch_boshu()
+        for item in boshu_items:
+            _add(item)
+    except Exception as e:
+        logger.error("スポーツ庁公募取得失敗: %s", e)
+
+    return new_items
+
+
 def format_message(item: dict) -> str:
     """入札情報をSlack投稿用テキストに整形する。"""
+    tag = " [🏛️スポーツ庁]" if item.get("organization") == "スポーツ庁" else ""
     lines = [
-        f"📋 *{item['title']}*",
+        f"📋 *{item['title']}*{tag}",
         f"🏢 {item.get('organization', '不明')}",
         f"📍 {item.get('prefecture', '')} {item.get('city', '')}".strip(),
         f"📁 {item.get('category', '不明')}",
@@ -60,28 +99,7 @@ def main():
     logger.info("入札情報収集を開始します")
 
     sent_ids = load_sent_ids()
-    new_items: list[dict] = []
-    seen_ids: set[str] = set()
-
-    # 全キーワードで検索し、重複排除しながら収集
-    for keyword in SEARCH_KEYWORDS:
-        try:
-            results = search(keyword)
-        except Exception as e:
-            logger.error("検索失敗 keyword=%s: %s", keyword, e)
-            continue
-
-        logger.info("keyword=%s: %d件取得", keyword, len(results))
-
-        for item in results:
-            item_id = item.get("id")
-            if not item_id:
-                continue
-            if item_id in sent_ids or item_id in seen_ids:
-                continue
-            seen_ids.add(item_id)
-            new_items.append(item)
-
+    new_items = _collect(sent_ids)
     logger.info("新着案件: %d件（重複排除済み）", len(new_items))
 
     # Slack通知
